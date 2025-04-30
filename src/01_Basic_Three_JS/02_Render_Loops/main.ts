@@ -62,6 +62,8 @@ import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 //		c. Spiral of death: Frame rate drops significantly on frame 1, increasing deltaTime for frame 2.
 //			 Frame 2 calculates gameplay with absurdly high deltaTime, and so on. Fix with clamp dt to max.
 
+const frenchFlag = '\uD83C\uDDEB\uD83C\uDDF7';
+
 class App {
 
 	#renderer: WebGPURenderer;
@@ -72,14 +74,23 @@ class App {
 	#mesh: THREE.Mesh;
 	#debugUI: GUI;
 	#settings = {
+		// Time Settings
 		useDeltaTime: true,
 		useFixedFrameRate: false,
 		fixedTimeStep: 0.03,
 		fixedUnifiedFPS: 30,
 		fixedCPUFPS: 30,
 		fixedGPUFPS: 30,
+		// Time Values
 		clampMin: 0.01,
 		clampMax: 0.5,
+		// Canvas Settings,
+		resizeCanvas: true,
+		cameraResizeUpdate: true,
+		useFixedAspectRatio: false,
+		// Canvas Values
+		fixedAspectController: '16:9',
+		fixedAspect: 16 / 9,
 	};
 
 	#timeSinceLastUpdate = 0;
@@ -96,11 +107,11 @@ class App {
 	}
 
 
-	//
 	initialize() {
 
 		this.#renderer = new THREE.WebGPURenderer();
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
+		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
 
 		const aspect = window.innerWidth / window.innerHeight;
@@ -127,13 +138,14 @@ class App {
 		this.#scene.add( this.#mesh );
 
 		this.#debugUI = new GUI();
-		const settingsFolder = this.#debugUI.addFolder( 'Settings' );
+		const settingsFolder = this.#debugUI.addFolder( 'Time Settings' );
 		settingsFolder.add( this.#settings, 'useDeltaTime' );
 		settingsFolder.add( this.#settings, 'useFixedFrameRate' );
 		const valuesFolder = this.#debugUI.addFolder( 'Values' );
 		valuesFolder.add( this.#settings, 'fixedTimeStep', 0.01, 0.5 );
 		const fixedCPU = valuesFolder.add( this.#settings, 'fixedCPUFPS', 1, 60 ).step( 1 );
 		const fixedGPU = valuesFolder.add( this.#settings, 'fixedGPUFPS', 1, 60 ).step( 1 );
+		// Set CPU and GPU to run at same rate when useFixedFrameRate === true
 		valuesFolder.add( this.#settings, 'fixedUnifiedFPS', 1, 60 ).step( 1 ).onChange( () => {
 
 			this.#settings.fixedCPUFPS = this.#settings.fixedUnifiedFPS;
@@ -144,6 +156,79 @@ class App {
 		} );
 		valuesFolder.add( this.#settings, 'clampMin', 0.01, 1.0 );
 		valuesFolder.add( this.#settings, 'clampMax', 0.01, 1.0 );
+		const resizeSettingsFolder = this.#debugUI.addFolder( 'Resize Settings' );
+		resizeSettingsFolder.add( this.#settings, 'resizeCanvas' );
+		resizeSettingsFolder.add( this.#settings, 'cameraResizeUpdate' );
+		resizeSettingsFolder.add( this.#settings, 'useFixedAspectRatio' );
+		const resizeValuesFolder = this.#debugUI.addFolder( 'Resize Values' );
+		resizeValuesFolder.add( this.#settings, 'fixedAspectController', [
+			'16:9 (HD)',
+			'4:3 (CRT)',
+			'1:85:1 (Standard)',
+			'2.39:1 (Anamorphic)',
+			'2.76:1 (Ultra Panavasion)',
+			'1.90:1 ("Imax")',
+			'1.43:1 (Imax Film)',
+			'4:1 (Gance)'
+		] ).onChange( () => {
+
+			// Lazy way, no parsing
+			switch ( this.#settings.fixedAspectController ) {
+
+
+				case '4:3 (CRT)': {
+
+					this.#settings.fixedAspect = 4 / 3;
+					break;
+
+				}
+
+				case '1:85:1 (Standard)': {
+
+					this.#settings.fixedAspect = 1.85;
+					break;
+
+				}
+
+				case '2.39:1 (Anamorphic)': {
+
+					this.#settings.fixedAspect = 2.39;
+					break;
+
+				}
+
+				case '2.76:1 (Ultra Panavasion)': {
+
+					this.#settings.fixedAspect = 2.76;
+					break;
+
+				}
+
+				case '1.90:1 ("Imax")': {
+
+					this.#settings.fixedAspect = 1.90;
+					break;
+
+				}
+
+				case '1.43:1 (Imax Film)': {
+
+					this.#settings.fixedAspect = 1.43;
+					break;
+
+				}
+
+				case '4:1 (Gance)': {
+
+					this.#settings.fixedAspect = 4.0;
+					break;
+
+				}
+
+
+			}
+
+		} ).name( 'Fixed Aspect Ratio' );
 
 		this.#raf();
 
@@ -161,10 +246,12 @@ class App {
 			this.#timeSinceLastRender += deltaTime;
 			this.#timeSinceLastUpdate += deltaTime;
 
-			const cpuFrameInterval = 1 / fixedCPUFPS;
-			const gpuFrameInterval = 1 / fixedGPUFPS;
-
 			if ( useFixedFrameRate ) {
+
+				// # of times per second to update the state
+				const cpuFrameInterval = 1 / fixedCPUFPS;
+				// # of times per second to render a frame
+				const gpuFrameInterval = 1 / fixedGPUFPS;
 
 				if ( this.#timeSinceLastRender >= cpuFrameInterval ) {
 
@@ -209,9 +296,20 @@ class App {
 
 	#onWindowResize() {
 
-		this.#camera.aspect = window.innerWidth / window.innerHeight;
-		this.#camera.updateProjectionMatrix();
-		this.#renderer.setSize( window.innerWidth, window.innerHeight );
+		// NOTE how the mesh distorts when either projection updates and canvas resizing are off.
+		// Proper perspective is maintained when both are turned off, but parts of the image get cut off.
+		// (technically the image changes as we resize [there is no letterboxing or aspect ratio maintenance])
+		// maintaining an image with the same amount of pixel area, even if the perspective of the elements
+		// in the image are the same. For that, we need to maintain a fixed aspect ratio
+
+		if ( this.#settings.cameraResizeUpdate ) {
+
+			this.#camera.aspect = this.#settings.useFixedAspectRatio ? this.#settings.fixedAspect : window.innerWidth / window.innerHeight;
+			this.#camera.updateProjectionMatrix();
+
+		}
+
+		this.#renderer.setSize( 2.7 * 500, 1 * 500, this.#settings.resizeCanvas );
 
 	}
 
