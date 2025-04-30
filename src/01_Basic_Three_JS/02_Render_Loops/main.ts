@@ -90,7 +90,8 @@ class App {
 		useFixedAspectRatio: false,
 		// Canvas Values
 		fixedAspectController: '16:9',
-		fixedAspect: 16 / 9,
+		aspectWidth: 16,
+		aspectHeight: 9,
 	};
 
 	#timeSinceLastUpdate = 0;
@@ -109,7 +110,7 @@ class App {
 
 	initialize() {
 
-		this.#renderer = new THREE.WebGPURenderer();
+		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'c' ) } );
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
@@ -157,9 +158,21 @@ class App {
 		valuesFolder.add( this.#settings, 'clampMin', 0.01, 1.0 );
 		valuesFolder.add( this.#settings, 'clampMax', 0.01, 1.0 );
 		const resizeSettingsFolder = this.#debugUI.addFolder( 'Resize Settings' );
-		resizeSettingsFolder.add( this.#settings, 'resizeCanvas' );
-		resizeSettingsFolder.add( this.#settings, 'cameraResizeUpdate' );
-		resizeSettingsFolder.add( this.#settings, 'useFixedAspectRatio' );
+		resizeSettingsFolder.add( this.#settings, 'resizeCanvas' ).onChange( () => {
+
+			this.#onWindowResize();
+
+		} );
+		resizeSettingsFolder.add( this.#settings, 'cameraResizeUpdate' ).onChange( () => {
+
+			this.#onWindowResize();
+
+		} );
+		resizeSettingsFolder.add( this.#settings, 'useFixedAspectRatio' ).onChange( () => {
+
+			this.#onWindowResize();
+
+		} );
 		const resizeValuesFolder = this.#debugUI.addFolder( 'Resize Values' );
 		resizeValuesFolder.add( this.#settings, 'fixedAspectController', [
 			'16:9 (HD)',
@@ -169,64 +182,88 @@ class App {
 			'2.76:1 (Ultra Panavasion)',
 			'1.90:1 ("Imax")',
 			'1.43:1 (Imax Film)',
-			'4:1 (Gance)'
+			'4:1 (Gance)',
+			'1:1'
 		] ).onChange( () => {
 
 			// Lazy way, no parsing
 			switch ( this.#settings.fixedAspectController ) {
 
+				case '16:9 (HD)': {
+
+					this.#settings.aspectWidth = 16;
+					this.#settings.aspectHeight = 9;
+					break;
+
+				}
 
 				case '4:3 (CRT)': {
 
-					this.#settings.fixedAspect = 4 / 3;
+					this.#settings.aspectWidth = 4;
+					this.#settings.aspectHeight = 3;
 					break;
 
 				}
 
 				case '1:85:1 (Standard)': {
 
-					this.#settings.fixedAspect = 1.85;
+					this.#settings.aspectWidth = 1.85;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
 				case '2.39:1 (Anamorphic)': {
 
-					this.#settings.fixedAspect = 2.39;
+					this.#settings.aspectWidth = 2.39;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
 				case '2.76:1 (Ultra Panavasion)': {
 
-					this.#settings.fixedAspect = 2.76;
+					this.#settings.aspectWidth = 2.76;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
 				case '1.90:1 ("Imax")': {
 
-					this.#settings.fixedAspect = 1.90;
+					this.#settings.aspectWidth = 1.90;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
 				case '1.43:1 (Imax Film)': {
 
-					this.#settings.fixedAspect = 1.43;
+					this.#settings.aspectWidth = 1.43;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
 				case '4:1 (Gance)': {
 
-					this.#settings.fixedAspect = 4.0;
+					this.#settings.aspectWidth = 4.0;
+					this.#settings.aspectHeight = 1;
 					break;
 
 				}
 
+				case '1:1': {
+
+					this.#settings.aspectWidth = 1.0;
+					this.#settings.aspectHeight = 1.0;
+					break;
+
+				}
 
 			}
+
+			this.#onWindowResize();
 
 		} ).name( 'Fixed Aspect Ratio' );
 
@@ -296,20 +333,49 @@ class App {
 
 	#onWindowResize() {
 
+		const { cameraResizeUpdate, useFixedAspectRatio, aspectWidth, aspectHeight } = this.#settings;
+
 		// NOTE how the mesh distorts when either projection updates and canvas resizing are off.
 		// Proper perspective is maintained when both are turned off, but parts of the image get cut off.
 		// (technically the image changes as we resize [there is no letterboxing or aspect ratio maintenance])
 		// maintaining an image with the same amount of pixel area, even if the perspective of the elements
 		// in the image are the same. For that, we need to maintain a fixed aspect ratio
 
+
+		let canvasWidth = window.innerWidth;
+		let canvasHeight = window.innerHeight;
+
+		if ( useFixedAspectRatio ) {
+
+			const windowAspect = window.innerWidth / window.innerHeight;
+			const targetAspect = aspectWidth / aspectHeight;
+
+			if ( windowAspect > targetAspect ) {
+
+				// Window is too wide, limit width
+				canvasHeight = window.innerHeight;
+				canvasWidth = canvasHeight * targetAspect;
+
+			} else {
+
+				// Window is too tall, limit height
+				canvasWidth = window.innerWidth;
+				canvasHeight = canvasWidth / targetAspect;
+
+			}
+
+		}
+
 		if ( this.#settings.cameraResizeUpdate ) {
 
-			this.#camera.aspect = this.#settings.useFixedAspectRatio ? this.#settings.fixedAspect : window.innerWidth / window.innerHeight;
+			this.#camera.aspect = useFixedAspectRatio ?
+				aspectWidth / aspectHeight :
+				window.innerWidth / window.innerHeight;
 			this.#camera.updateProjectionMatrix();
 
 		}
 
-		this.#renderer.setSize( 2.7 * 500, 1 * 500, this.#settings.resizeCanvas );
+		this.#renderer.setSize( canvasWidth, canvasHeight, this.#settings.resizeCanvas );
 
 	}
 
