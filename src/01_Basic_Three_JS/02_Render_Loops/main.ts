@@ -88,10 +88,12 @@ class App {
 		resizeCanvas: true,
 		cameraResizeUpdate: true,
 		useFixedAspectRatio: false,
+		useDPR: false,
 		// Canvas Values
 		fixedAspectController: '16:9',
 		aspectWidth: 16,
 		aspectHeight: 9,
+		dprValue: 'Device',
 	};
 
 	#timeSinceLastUpdate = 0;
@@ -110,7 +112,7 @@ class App {
 
 	initialize() {
 
-		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'c' ) } );
+		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'three_canvas' ) } );
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
@@ -169,6 +171,11 @@ class App {
 
 		} );
 		resizeSettingsFolder.add( this.#settings, 'useFixedAspectRatio' ).onChange( () => {
+
+			this.#onWindowResize();
+
+		} );
+		resizeSettingsFolder.add( this.#settings, 'useDPR' ).onChange( () => {
 
 			this.#onWindowResize();
 
@@ -267,6 +274,12 @@ class App {
 
 		} ).name( 'Fixed Aspect Ratio' );
 
+		resizeValuesFolder.add( this.#settings, 'dprValue', [ 'Device', '0.1', '0.5', '1.0', '2.0', '3.0' ] ).onChange( () => {
+
+			this.#onWindowResize();
+
+		} );
+
 		this.#raf();
 
 	}
@@ -333,28 +346,33 @@ class App {
 
 	#onWindowResize() {
 
-		const { cameraResizeUpdate, useFixedAspectRatio, aspectWidth, aspectHeight } = this.#settings;
+		const { cameraResizeUpdate, useFixedAspectRatio, aspectWidth, aspectHeight, dprValue } = this.#settings;
 
 		// NOTE how the mesh distorts when either projection updates and canvas resizing are off.
 		// Proper perspective is maintained when both are turned off, but parts of the image get cut off.
 		// (technically the image changes as we resize [there is no letterboxing or aspect ratio maintenance])
 		// maintaining an image with the same amount of pixel area, even if the perspective of the elements
 		// in the image are the same. For that, we need to maintain a fixed aspect ratio
-
-
 		let canvasWidth = window.innerWidth;
 		let canvasHeight = window.innerHeight;
 
+		const dpr = dprValue === 'Device' ? window.devicePixelRatio : parseFloat( dprValue );
+
 		if ( useFixedAspectRatio ) {
 
+			// Aspect ratio of your browser window
 			const windowAspect = window.innerWidth / window.innerHeight;
+			// Target aspect ratio of your image
 			const targetAspect = aspectWidth / aspectHeight;
 
+			// When window size is wider than target, limit the width to a factor of the height
 			if ( windowAspect > targetAspect ) {
 
 				// Window is too wide, limit width
 				canvasHeight = window.innerHeight;
 				canvasWidth = canvasHeight * targetAspect;
+
+				// Otherwise limit the height
 
 			} else {
 
@@ -375,7 +393,21 @@ class App {
 
 		}
 
+
+		// Arguments: Width, height, and whether to resize the canvas
 		this.#renderer.setSize( canvasWidth, canvasHeight, this.#settings.resizeCanvas );
+		console.log( this.#settings.useDPR );
+		if ( this.#settings.useDPR ) {
+
+			console.log( 'setting' );
+
+			this.#renderer.setPixelRatio( dpr );
+
+		} else {
+
+			this.#renderer.setPixelRatio( 1 );
+
+		}
 
 	}
 
