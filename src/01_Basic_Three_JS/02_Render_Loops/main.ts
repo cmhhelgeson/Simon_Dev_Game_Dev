@@ -112,7 +112,7 @@ class App {
 
 	initialize() {
 
-		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'three_canvas' ) } );
+		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'c' ) } );
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
@@ -291,10 +291,12 @@ class App {
 
 			const { useDeltaTime, clampMin, clampMax, fixedTimeStep, useFixedFrameRate, fixedCPUFPS, fixedGPUFPS } = this.#settings;
 
-			const deltaTime = useDeltaTime ? Math.min( Math.max( this.#clock.getDelta(), clampMin ), clampMax ) : fixedTimeStep;
+			const timeElapsed = this.#clock.getDelta();
+			const deltaTime = useDeltaTime ? Math.min( Math.max( timeElapsed, clampMin ), clampMax ) : fixedTimeStep;
 
-			this.#timeSinceLastRender += deltaTime;
-			this.#timeSinceLastUpdate += deltaTime;
+			// We're still calculating literal time even when deltaTime is set arbitrarily
+			this.#timeSinceLastRender += timeElapsed;
+			this.#timeSinceLastUpdate += timeElapsed;
 
 			if ( useFixedFrameRate ) {
 
