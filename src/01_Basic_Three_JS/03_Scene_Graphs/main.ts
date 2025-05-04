@@ -5,62 +5,32 @@ import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import { deinterleaveAttribute } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-// Render Loop
-// Continuous Cycle updating the game state and rendering the result on screen
-// Takes in inputs from player and system, outputs a graphical result that is
-// rendererd to the screen.
-// Key Responsibilities:
-//	1. Update State (Player Movements, Game Environment, AI Systems, Physics)
-//		 All Game Systems
-// 	2. Display the visual result of those systems interacting.
-// 	3. Manage time between each iteration of the update -> draw process,
-// 		 and pass that on to each iteration of the render loop.
-// 	4. Maintain good game feel
-//	Example:
-//	void main() {
-//		// Initialization step
-//		initGame()
-//		// Update state and render infinitely
-//		while (true)
-//			// Logic, Input, Physics, Loading Assets
-//			updateState();
-//			// Speak to graphics API
-//			renderGroup();
-//			if (isFinished()) {
-//				break;
-//			}
+// Scene Graph: Basic data strucutre to manage complexity of scene
+// Graph represents everything in scene and everythign that scene
+// depends on for renderers.
+// Scene Graph exists in a tree structure:
+//	Nodes with children
+//	       	[]
+// 	        /\
+// 	      []  []
+//        /\  /\
+//			 [][][][]
+// Includes meshes, particle systems, lights, cameras, etc
+// Tree forms a transform hierarchy
+// Each parent's transform applies to the child's transform as well
+// So if the top most node rotates 21 degrees, all it's children will rotate
+// 21 degrees as well, then the children's indivudal transforms will be applied.
 
-// In many game development environments, the loop is obfuscated for ease of use
-// Unity: Using GameObject derives from MonoBehavior's Update() function
-//	and tends to simply loop through all the extant entities and components
-//	(NOTE: Not sure if Simon is talking about pre-ECS Unity or not).
-
-// Frame Deltas
-// Helps maintain cosnsitency of gameplay on disparate devices,
-// even if each device takes different legnths of time
-// to render and update the state of a scene.
-// A game running at 60fps versus 30fps should generally look the same
-// 1. frameDelta/deltaTime/dt: time elapsed between the current frame and the next frame.
-// 		Example: Object moves at 1 meter per second
-//			Machine #1 (Slow): Render Loop runs at 1fps -> Update called once per second
-//						w/o dt: Moves 1 m per frame, 1 m per second
-//						w/ 	dt: Moves 1/1 per frame, 1 m per second
-// 			Machine #2 (Fast): Render Loop runs at 2fps -> Update called twice per second
-//						w/o dt: Moves 1 m per frame, 2 m per second
-//						w/ dt : Moves 1/2 (0.5) m per frame, 1 m per second
-//			Machine #3 (30fps) -> Update called 30 times per second
-//						w/ dt : Moves 1/30 = 0.03 m per frame, 1 m per second
-// 			Machine #4 (60 fps) -> Update called 60 times per second
-//						w/ dt : Moves 1/60 = 0.016 m per frame, 1 m per second
-// 2. Problems with deltaTime
-//		a. Variable Time Steps: In Complex Physics simulations, it's often preferable to have
-//			 fixed time steps to prevent non-deterministic behavior. If your game has complex physics simulations,
-//			 you may want to separate gameplay render loop behavior from physics render loop behavior.
-//		b. Spikes: Large spikes in deltaTime cause jumps in gameplay behavior, which can be mitigated with smoothing.
-//			 Can fix by capping frame rate, or ignoring spike.
-//		c. Spiral of death: Frame rate drops significantly on frame 1, increasing deltaTime for frame 2.
-//			 Frame 2 calculates gameplay with absurdly high deltaTime, and so on. Fix with clamp dt to max.
+interface Planet {
+	distance: number,
+	color: THREE.Color,
+	size: number,
+	name: string,
+	moons: Planet[],
+	speed: number,
+}
 
 class App {
 
@@ -87,15 +57,21 @@ class App {
 		resizeCanvas: true,
 		cameraResizeUpdate: true,
 		useFixedAspectRatio: false,
-		useDPR: false,
+		useDPR: true,
 		// Canvas Values
 		fixedAspectController: '16:9',
 		aspectWidth: 16,
 		aspectHeight: 9,
 		dprValue: 'Device',
 	};
+
+	#orbits: Group[] = [];
+
+
 	#settings = {
-		rotation: true,
+		rotateEarth: true,
+		rotateMoon: true,
+		earthOrbitalPlane: 0.0,
 	};
 
 
@@ -122,29 +98,171 @@ class App {
 
 		const aspect = window.innerWidth / window.innerHeight;
 		this.#camera = new THREE.PerspectiveCamera( 50, aspect, 0.1, 2000 );
-		this.#camera.position.z = 5;
+		this.#camera.position.z = 200;
 
 		this.#controls = new OrbitControls( this.#camera, this.#renderer.domElement );
 		// Smooths camera movement
 		this.#controls.enableDamping = true;
 		// Explicitly set camera's target to the default of 0, 0, 0
-		this.#controls.target.set( 0, 0, 0, );
+		this.#controls.target.set( 0, 0, 0 );
 		this.#controls.update();
 
 		this.#scene = new THREE.Scene();
 
-		this.#mesh = new THREE.Mesh(
-			new THREE.BoxGeometry(),
-			new THREE.MeshBasicMaterial( {
-				color: 0xff0000,
-				wireframe: true,
-			} )
-		);
+		const planets: Planet[] = [
+			{
+				name: 'earth',
+				size: 5,
+				distance: 60,
+				color: new THREE.Color( 0x0000ff ),
+				speed: 1,
+				moons: [
+					{
+						name: 'moon',
+						distance: 8,
+						size: 1,
+						speed: 3,
+						color: new THREE.Color( 0x888888 ),
+						moons: [],
+					}
+				]
+			}, {
+				name: 'mars',
+				size: 4,
+				color: new THREE.Color( 0xff0000 ),
+				distance: 100,
+				speed: 0.5,
+				moons: [
+					{
+						name: 'phobos',
+						size: 1,
+						color: new THREE.Color( 0x888888 ),
+						distance: 7,
+						speed: 3,
+						moons: [],
+					}, {
+						name: 'delmos',
+						size: 1,
+						color: new THREE.Color( 0x888888 ),
+						distance: 11,
+						speed: 4,
+						moons: [],
+					}
+				]
+			}
+		];
 
-		this.#scene.add( this.#mesh );
+		this.#createSolarSystem3( planets );
 
 		this.#debugUI = new GUI();
-		this.#debugUI.add( this.#settings, 'rotation' );
+		//this.#addRendererDebugGui();
+
+		this.#raf();
+
+	}
+
+	/*#createSolarSystem() {
+
+		const sunGeo = new THREE.SphereGeometry( 40, 32, 32 );
+		const sunMaterial = new THREE.MeshBasicMaterial( { color: 0xffff00 } );
+		this.#sun = new THREE.Mesh( sunGeo, sunMaterial );
+
+		const earthGeo = new THREE.SphereGeometry( 5, 32, 32 );
+		const earthMaterial = new THREE.MeshBasicMaterial( { color: 0x0000ff } );
+		this.#earth = new THREE.Mesh( earthGeo, earthMaterial );
+		this.#earth.position.set( 60, 0, 0 );
+
+		const moonGeo = new THREE.SphereGeometry( 1, 32, 32 );
+		const moonMaterial = new THREE.MeshBasicMaterial( { color: 0x888888 } );
+		const moon = new THREE.Mesh( moonGeo, moonMaterial );
+		moon.position.set( 8, 0, 0 );
+		this.#earth.add( moon );
+
+		this.#sun.add( this.#earth );
+		this.#scene.add( this.#sun );
+
+	}
+
+	#createSolarSystem2() {
+
+		// Create new mesh.
+		const moonGeo = new THREE.SphereGeometry( 1, 32, 32 );
+		const moonMaterial = new THREE.MeshBasicMaterial( { color: 0x888888 } );
+		const moon = new THREE.Mesh( moonGeo, moonMaterial );
+		moon.position.set( 8, 0, 0 );
+
+		// Create a group that is inserted in lieu of the object itself.
+		this.#moonOrbit = new THREE.Group();
+		this.#moonOrbit.add( moon );
+
+		// Create new mesh.
+		const earthGeo = new THREE.SphereGeometry( 5, 32, 32 );
+		const earthMaterial = new THREE.MeshBasicMaterial( { color: 0x0000ff } );
+		this.#earth = new THREE.Mesh( earthGeo, earthMaterial );
+		this.#earth.position.set( 60, 0, 0 );
+
+		// Create group
+		this.#earthOrbit = new THREE.Group();
+		this.#earthOrbit.add( this.#earth );
+
+		// Add orbit from one layer down.
+		this.#earth.add( this.#moonOrbit );
+
+		// Create new mesh
+		const sunGeo = new THREE.SphereGeometry( 40, 32, 32 );
+		const sunMaterial = new THREE.MeshBasicMaterial( { color: 0xffff00 } );
+		this.#sun = new THREE.Mesh( sunGeo, sunMaterial );
+
+		// Create group
+		//na
+
+		// Add orbit from one layer down
+		this.#sun.add( this.#earthOrbit );
+		this.#scene.add( this.#sun );
+
+		// From here, in the step function, we rotate the orbits themselves rather than the object
+
+	} */
+
+	#createCelestialBody( parent: THREE.Mesh, planet: Planet ) {
+
+		const geo = new THREE.SphereGeometry( planet.size, 32, 32 );
+		const material = new THREE.MeshBasicMaterial( { color: planet.color } );
+		const planetMesh = new THREE.Mesh( geo, material );
+		planetMesh.position.set( planet.distance, 0, 0 );
+
+		const planetOrbit = new THREE.Group();
+		planetOrbit.add( planetMesh );
+
+		this.#orbits.push( { target: planetOrbit, speed: planet.speed } );
+		parent.add( planetOrbit );
+
+		for ( const moon of planet.moons ) {
+
+			this.#createCelestialBody( planetMesh, moon );
+
+		}
+
+	}
+
+	#createSolarSystem3( planetData: Planet[] ) {
+
+		const sunGeo = new THREE.SphereGeometry( 40, 32, 32 );
+		const sunMaterial = new THREE.MeshBasicMaterial( { color: 0xffff00 } );
+		const sun = new THREE.Mesh( sunGeo, sunMaterial );
+
+		this.#scene.add( sun );
+
+		for ( const planet of planetData ) {
+
+			this.#createCelestialBody( sun, planet );
+
+		}
+
+	}
+
+	#addRendererDebugGui() {
+
 		this.#debugUIMap[ 'Time Settings' ] = this.#debugUI.addFolder( 'Time Settings' );
 		this.#debugUIMap[ 'Time Settings' ].add( this.#rendererSettings, 'useDeltaTime' );
 		this.#debugUIMap[ 'Time Settings' ].add( this.#rendererSettings, 'useFixedFrameRate' );
@@ -290,8 +408,6 @@ class App {
 
 		}
 
-		this.#raf();
-
 	}
 
 
@@ -345,12 +461,34 @@ class App {
 	// State update function
 	#step( deltaTime: number ) {
 
-		this.#controls.update( deltaTime );
-		if ( this.#settings.rotation ) {
+		const { rotateEarth, rotateMoon } = this.#settings;
 
-			this.#mesh.rotation.y += deltaTime;
+		for ( const orbit of this.#orbits ) {
+
+			orbit.target.rotateY( deltaTime );
 
 		}
+
+		// Version 1: Parent can only rotate children
+		// this.#sun.rotate()
+
+		// Version 2: Orbits can work separately
+		// Earth can rotate separately from moon
+		/*if ( rotateEarth ) {
+
+			this.#earthOrbit.rotateY( deltaTime );
+
+		}
+
+		if ( rotateMoon ) {
+
+			this.#moonOrbit.rotateY( deltaTime * 5 );
+
+		} */
+
+		// Version 3:
+
+		this.#controls.update( deltaTime );
 
 	}
 
