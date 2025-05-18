@@ -5,6 +5,7 @@ import { WebGPURenderer } from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+import Stats from 'three/addons/libs/stats.module.js';
 
 interface AppInitializationOptions {
 	projectName?: string,
@@ -19,6 +20,7 @@ class App {
 	#clock: THREE.Clock;
 	#controls: OrbitControls;
 	#mesh: THREE.Mesh;
+	#stats: Stats;
 	#debugUI: GUI;
 	#debugUIMap = {};
 	#rendererSettings = {
@@ -70,6 +72,9 @@ class App {
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
 
+		this.#stats = new Stats();
+		document.body.appendChild( this.#stats.dom );
+
 		const aspect = window.innerWidth / window.innerHeight;
 		this.#camera = new THREE.PerspectiveCamera( 50, aspect, 0.1, 2000 );
 		this.#camera.position.z = 200;
@@ -98,10 +103,10 @@ class App {
 		await this.#setupRenderer( options );
 
 		// Initialize project
-		const projectFolder = this.#debugUI.addFolder( options.projectName ?? 'Project' );
+		// const projectFolder = this.#debugUI.addFolder( options.projectName ?? 'Project' );
 
 		// Apply project specific parameters to the scene
-		await this.onSetupProject( projectFolder );
+		await this.onSetupProject( );
 
 	}
 
@@ -262,6 +267,7 @@ class App {
 			const { useDeltaTime, clampMin, clampMax, fixedTimeStep, useFixedFrameRate, fixedCPUFPS, fixedGPUFPS } = this.#rendererSettings;
 
 			const timeElapsed = this.#clock.getDelta();
+			const totalTimeElapsed = this.#clock.getElapsedTime();
 			const deltaTime = useDeltaTime ? Math.min( Math.max( timeElapsed, clampMin ), clampMax ) : fixedTimeStep;
 
 			// We're still calculating literal time even when deltaTime is set arbitrarily
@@ -277,21 +283,21 @@ class App {
 
 				if ( this.#timeSinceLastRender >= cpuFrameInterval ) {
 
-					this.#step( useDeltaTime ? this.#timeSinceLastUpdate : fixedTimeStep );
+					this.#step( useDeltaTime ? this.#timeSinceLastUpdate : fixedTimeStep, totalTimeElapsed );
 					this.#timeSinceLastUpdate = 0;
 
 				}
 
 				if ( this.#timeSinceLastRender >= gpuFrameInterval ) {
 
-					this.#render();
+					this.#render( deltaTime );
 					this.#timeSinceLastRender = 0;
 
 				}
 
 			} else {
 
-				this.#step( deltaTime );
+				this.#step( deltaTime, totalTimeElapsed );
 				this.#render( deltaTime );
 
 			}
@@ -303,11 +309,11 @@ class App {
 	}
 
 	// State update function
-	#step( deltaTime: number ) {
+	#step( deltaTime: number, totalTimeElapsed: number ) {
 
-		this.onStep( deltaTime, 0 );
+		this.onStep( deltaTime, totalTimeElapsed );
 
-		this.#controls.update( deltaTime );
+		//this.#controls.update( deltaTime );
 
 	}
 
@@ -415,6 +421,19 @@ class App {
 	get CameraControls() {
 
 		return this.#controls;
+
+	}
+
+	get Stats() {
+
+		return this.#stats;
+
+	}
+
+	get DebugGui() {
+
+		return this.#debugUI;
+
 
 	}
 
