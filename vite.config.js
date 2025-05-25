@@ -7,6 +7,7 @@ export default defineConfig( {
 			'three/addons': 'three/examples/jsm',
 			'three/webgpu': 'three/webgpu',
 			'three/tsl': 'three/tsl',
+			'three/webgl': 'three',
 			'three': 'three/webgpu',
 		}
 	},

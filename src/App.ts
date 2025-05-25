@@ -1,6 +1,7 @@
 /* eslint-disable compat/compat */
 import * as THREE from 'three/webgpu';
 import { WebGPURenderer } from 'three/webgpu';
+import { WebGLRenderer } from 'three/webgl';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
@@ -14,7 +15,7 @@ interface AppInitializationOptions {
 
 class App {
 
-	#renderer: WebGPURenderer;
+	#renderer: WebGLRenderer;
 	#camera: THREE.PerspectiveCamera;
 	#scene: THREE.Scene;
 	#clock: THREE.Clock;
@@ -67,7 +68,7 @@ class App {
 
 	#setupRenderer( options ) {
 
-		this.#renderer = new THREE.WebGPURenderer( { canvas: document.getElementById( 'c' ) } );
+		this.#renderer = new WebGLRenderer( { canvas: document.getElementById( 'c' ) } );
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
