@@ -147,16 +147,18 @@ class App {
 
 			this.rendererType = 'WebGL';
 
-			return;
+		} else {
+
+			this.#renderer = new WebGPURenderer( {
+				canvas: documentCanvas,
+				forceWebGL: rendererType === 'WebGLFallback' ? true : false
+			} );
+
+			this.rendererType = 'WebGPU';
 
 		}
 
-		this.#renderer = new WebGPURenderer( {
-			canvas: documentCanvas,
-			forceWebGL: rendererType === 'WebGLFallback' ? true : false
-		} );
-
-		this.rendererType = 'WebGPU';
+		this.#renderer.shadowMap.enabled = true;
 
 	}
 

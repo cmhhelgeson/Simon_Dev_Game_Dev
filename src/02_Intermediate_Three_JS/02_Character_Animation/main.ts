@@ -3,7 +3,12 @@ import { App } from '../../App';
 import { GLTF } from 'three/examples/jsm/Addons.js';
 
 
+// GLTF Scene can contain an array of animations
+// AnimationClip class: can take keyframes of the animation
+
 class CharacterAnimation extends App {
+
+	#mixer: THREE.AnimationMixer;
 
 	constructor() {
 
@@ -67,6 +72,8 @@ class CharacterAnimation extends App {
 
 		};
 
+
+
 		const modelCallback = ( gltf: GLTF ) => {
 
 			gltf.scene.scale.setScalar( 2 );
@@ -78,17 +85,33 @@ class CharacterAnimation extends App {
 				if ( isMesh( c ) && c.material instanceof THREE.MeshStandardMaterial ) {
 
 					c.material.metalness = 0.25;
-					c.material.metalness = 0.2;
+					c.material.metalness = 1;
 
 				}
 
 			} );
 
 			this.Scene.add( gltf.scene );
+			this.#mixer = new THREE.AnimationMixer( gltf.scene );
+			// Returns gltf animation as animation action
+			const action = this.#mixer.clipAction( gltf.animations[ 1 ] );
+			action.play();
 
 		};
 
 		this.loadModel( 'character.glb', modelCallback );
+
+	}
+
+	onStep( deltaTime: number, totalTimeElapsed: number ) {
+
+		if ( this.#mixer ) {
+
+
+			this.#mixer.update( deltaTime );
+
+		}
+
 
 	}
 
@@ -100,6 +123,6 @@ const app = new CharacterAnimation();
 app.initialize( {
 	debug: true,
 	projectName: 'Character Animation',
-	rendererType: 'WebGPU',
+	rendererType: 'WebGL',
 	initialCameraMode: 'perspective',
 } );
