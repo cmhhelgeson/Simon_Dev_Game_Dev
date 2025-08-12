@@ -1,30 +1,93 @@
 /* eslint-disable compat/compat */
-import * as THREE from 'three/webgpu';
-import { WebGPURenderer } from 'three/webgpu';
-import { WebGLRenderer } from 'three/webgl';
+import * as THREE from 'three';
+import { Renderer, WebGPURenderer } from 'three/webgpu';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import Stats from 'three/addons/libs/stats.module.js';
+import { GLTF, GLTFLoader } from 'three/examples/jsm/Addons.js';
+
+type RendererEnum = 'WebGL' | 'WebGPU' | 'WebGLFallback'
 
 interface AppInitializationOptions {
+	/* The name of the application and the title of the page */
 	projectName?: string,
-	debug: boolean
+	/* Flag indicating whether to provide the user debug functionality through the GUI */
+	debug: boolean,
+	/* The renderer to use in the project */
+	rendererType?: RendererEnum,
+	/* Whether the scene is first rendered using a perspective or an orthographic camera */
+	initialCameraMode?: 'perspective' | 'orthographic'
 }
+
+/**
+ * Configuration options for rendering and canvas behavior.
+ */
+type RendererSettings = {
+  /** Use delta time between frames for updates */
+  useDeltaTime: boolean;
+  /** Use a fixed frame rate instead of delta time */
+  useFixedFrameRate: boolean;
+  /** Fixed time step in seconds */
+  fixedTimeStep: number;
+  /** Unified FPS target across systems */
+  fixedUnifiedFPS: number;
+  /** Target CPU frame rate */
+  fixedCPUFPS: number;
+  /** Target GPU frame rate */
+  fixedGPUFPS: number;
+  /** Minimum clamp for delta time */
+  clampMin: number;
+  /** Maximum clamp for delta time */
+  clampMax: number;
+  /** Enable automatic canvas resize on window size change */
+  resizeCanvas: boolean;
+  /** Update the camera's aspect and projection matrix when the canvas resizes */
+  cameraResizeUpdate: boolean;
+  /** Maintain a fixed aspect ratio */
+  useFixedAspectRatio: boolean;
+  /** Use device pixel ratio (DPR) to set resolution of display */
+  useDPR: boolean;
+  /** Aspect ratio controller, e.g., '16:9' */
+  fixedAspectController: string;
+  /** Width part of fixed aspect ratio */
+  aspectWidth: number;
+  /** Height part of fixed aspect ratio */
+  aspectHeight: number;
+  /** Manually specify the device pixel ratio of the scene */
+  dprValue: number;
+};
+
+type GLTFLoadCallback = ( gltf: GLTF ) => void;
 
 class App {
 
-	#renderer: WebGLRenderer;
-	#camera: THREE.PerspectiveCamera;
+	/**
+	 * @type {Renderer | THREE.WebGLRenderer}
+   * @private
+   * The renderer instance, can either be the modern Three.js Renderer or the legacy WebGLRenderer
+   */
+	#renderer: Renderer | THREE.WebGLRenderer;
+	/**
+ 	 * @type {RendererEnum}
+   * Specifies which renderer type is currently being used.
+   */
+	rendererType: RendererEnum;
+	/**
+ 	 * @type {THREE.PerspectiveCamera | THREE.OrthographicCamera}
+   * @private
+   * The camera used in the application.
+   */
+	#camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
 	#scene: THREE.Scene;
 	#clock: THREE.Clock;
 	#controls: OrbitControls;
-	#mesh: THREE.Mesh;
 	#stats: Stats;
 	#debugUI: GUI;
 	#debugUIMap = {};
-	#rendererSettings = {
+	#rendererSettings: RendererSettings = {
 		// Time Settings
 		useDeltaTime: true,
 		useFixedFrameRate: false,
@@ -44,7 +107,7 @@ class App {
 		fixedAspectController: '16:9',
 		aspectWidth: 16,
 		aspectHeight: 9,
-		dprValue: 'Device',
+		dprValue: window.devicePixelRatio,
 	};
 
 	#timeSinceLastUpdate = 0;
@@ -66,9 +129,41 @@ class App {
 	constructor() {
 	}
 
+	#getRenderer( rendererType: RendererEnum ) {
+
+		const documentCanvas = document.getElementById( 'c' ) as HTMLCanvasElement;
+
+		if ( documentCanvas === null ) {
+
+			throw new Error( 'Cannot get canvas' );
+
+		}
+
+		if ( rendererType === 'WebGL' ) {
+
+			this.#renderer = new THREE.WebGLRenderer( {
+				canvas: documentCanvas
+			} );
+
+			this.rendererType = 'WebGL';
+
+			return;
+
+		}
+
+		this.#renderer = new WebGPURenderer( {
+			canvas: documentCanvas,
+			forceWebGL: rendererType === 'WebGLFallback' ? true : false
+		} );
+
+		this.rendererType = 'WebGPU';
+
+	}
+
 	#setupRenderer( options ) {
 
-		this.#renderer = new WebGLRenderer( { canvas: document.getElementById( 'c' ) } );
+		this.#getRenderer( options.rendererType ? options.rendererType : 'WebGPU' );
+
 		this.#renderer.setSize( window.innerWidth, window.innerHeight );
 		this.#renderer.setClearColor( 0x000000 );
 		document.body.appendChild( this.#renderer.domElement );
@@ -77,15 +172,24 @@ class App {
 		document.body.appendChild( this.#stats.dom );
 
 		const aspect = window.innerWidth / window.innerHeight;
-		this.#camera = new THREE.PerspectiveCamera( 50, aspect, 0.1, 2000 );
-		this.#camera.position.z = 200;
+		const cameraType = options.initialCameraMode ? options.initialCameraMode : 'perspective';
 
-		this.#controls = new OrbitControls( this.#camera, this.#renderer.domElement );
-		// Smooths camera movement
-		this.#controls.enableDamping = true;
-		// Explicitly set camera's target to the default of 0, 0, 0
-		this.#controls.target.set( 0, 0, 0 );
-		this.#controls.update();
+		if ( cameraType === 'perspective' ) {
+
+			this.#camera = new THREE.PerspectiveCamera( 50, aspect, 0.1, 2000 );
+
+			this.#controls = new OrbitControls( this.#camera, this.#renderer.domElement );
+			// Smooths camera movement
+			this.#controls.enableDamping = true;
+			// Explicitly set camera's target to the default of 0, 0, 0
+			this.#controls.target.set( 0, 0, 0 );
+			this.#controls.update();
+
+		} else {
+
+			this.#camera = new THREE.OrthographicCamera( - 1, 1, 1, - 1, 0, 1 );
+
+		}
 
 		this.#scene = new THREE.Scene();
 
@@ -103,8 +207,12 @@ class App {
 
 		await this.#setupRenderer( options );
 
+		this.#scene.backgroundBlurriness = 0.0;
+		this.#scene.backgroundIntensity = 0.01;
+		this.#scene.environmentIntensity = 1.0;
+
 		// Initialize project
-		// const projectFolder = this.#debugUI.addFolder( options.projectName ?? 'Project' );
+		//const projectFolder = this.#debugUI.addFolder( options.projectName ?? 'Project' );
 
 		// Apply project specific parameters to the scene
 		await this.onSetupProject( );
@@ -246,7 +354,7 @@ class App {
 
 		} ).name( 'Fixed Aspect Ratio' );
 
-		this.#debugUIMap[ 'Resize Values' ].add( this.#rendererSettings, 'dprValue', [ 'Device', '0.1', '0.5', '1.0', '2.0', '3.0' ] ).onChange( () => {
+		this.#debugUIMap[ 'Resize Values' ].add( this.#rendererSettings, 'dprValue', [ 0.1, 0.5, 1.0, 2.0, 3.0, window.devicePixelRatio ] ).onChange( () => {
 
 			this.#onWindowResize();
 
@@ -322,18 +430,26 @@ class App {
 
 		// App specific code executed per render
 		this.onRender( deltaTime );
-		this.#renderer.render( this.#scene, this.#camera );
+		if ( this.rendererType === 'WebGL' ) {
+
+			this.#renderer.render( this.#scene, this.#camera );
+
+		} else {
+
+			( this.#renderer as WebGPURenderer ).renderAsync( this.#scene, this.#camera );
+
+		}
 
 	}
 
 	#onWindowResize() {
 
-		const { cameraResizeUpdate, useFixedAspectRatio, aspectWidth, aspectHeight, dprValue } = this.#rendererSettings;
+		const { cameraResizeUpdate, useFixedAspectRatio, aspectWidth, aspectHeight } = this.#rendererSettings;
 
 		let canvasWidth = window.innerWidth;
 		let canvasHeight = window.innerHeight;
 
-		const dpr = dprValue === 'Device' ? window.devicePixelRatio : parseFloat( dprValue );
+		const dpr = this.#rendererSettings.dprValue ? this.#rendererSettings.dprValue : window.devicePixelRatio;
 
 		if ( useFixedAspectRatio ) {
 
@@ -366,6 +482,7 @@ class App {
 			this.#camera.aspect = useFixedAspectRatio ?
 				aspectWidth / aspectHeight :
 				window.innerWidth / window.innerHeight;
+
 			this.#camera.updateProjectionMatrix();
 
 		}
@@ -373,7 +490,6 @@ class App {
 
 		// Arguments: Width, height, and whether to resize the canvas
 		this.#renderer.setSize( canvasWidth, canvasHeight, this.#rendererSettings.resizeCanvas );
-		console.log( this.#rendererSettings.useDPR );
 		if ( this.#rendererSettings.useDPR ) {
 
 			this.#renderer.setPixelRatio( dpr );
@@ -387,6 +503,12 @@ class App {
 	}
 
 	async initialize( options: AppInitializationOptions ) {
+
+		if ( options.projectName ) {
+
+			document.title = options.projectName;
+
+		}
 
 		this.#clock = new THREE.Clock( true );
 
@@ -407,9 +529,60 @@ class App {
 
 	}
 
+	async loadGLSLShader( filePath ) {
+
+		// Load shaders
+		//const vsh = await fetch( './shaders/points-vsh.glsl' );
+		//const fsh = await fetch( './shaders/points-fsh.glsl' );
+
+		const shaderFile = await fetch( filePath );
+		const shaderText = await shaderFile.text();
+		return shaderText;
+
+	}
+
+	loadModel( path, loadCallback: GLTFLoadCallback ) {
+
+		const loader = new GLTFLoader();
+		loader.setPath( './resources/models/' );
+		loader.load( path, loadCallback );
+
+
+	}
+
+	loadRGBE( path ) {
+
+		const rgbeLoader = new RGBELoader();
+		rgbeLoader.load( path, ( hdrTexture ) => {
+
+			hdrTexture.mapping = THREE.EquirectangularReflectionMapping;
+
+			this.#scene.background = hdrTexture;
+			this.#scene.environment = hdrTexture;
+
+		} );
+
+	}
+
+	async loadShaders( path ) {
+
+		const vsh = await fetch( `${path}-vsh.glsl` ).then( ( res ) => res.text() );
+		const fsh = await fetch( `${path}-fsh.glsl` ).then( ( res ) => res.text() );
+
+		return { vertexShader: vsh, fragmentShader: fsh };
+
+	}
+
 	get Scene() {
 
 		return this.#scene;
+
+	}
+
+	setDPR( value ) {
+
+		this.#rendererSettings.dprValue = value;
+
 
 	}
 
