@@ -1,13 +1,16 @@
 /* eslint-disable compat/compat */
 import * as THREE from 'three';
-import { Renderer, WebGPURenderer } from 'three/webgpu';
+import { ComputeNode, Renderer, UniformNode, WebGPURenderer } from 'three/webgpu';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import Stats from 'three/addons/libs/stats.module.js';
-import { GLTF, GLTFLoader } from 'three/examples/jsm/Addons.js';
+import { Font, FontLoader } from 'three/addons/loaders/FontLoader.js';
+import { GLTF, GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { ShaderNodeObject, uniform } from 'three/tsl';
 
 type RendererEnum = 'WebGL' | 'WebGPU' | 'WebGLFallback'
 
@@ -19,7 +22,8 @@ interface AppInitializationOptions {
 	/* The renderer to use in the project */
 	rendererType?: RendererEnum,
 	/* Whether the scene is first rendered using a perspective or an orthographic camera */
-	initialCameraMode?: 'perspective' | 'orthographic'
+	initialCameraMode?: 'perspective' | 'orthographic',
+	fixedFrameRate?: number
 }
 
 /**
@@ -110,6 +114,16 @@ class App {
 		dprValue: window.devicePixelRatio,
 	};
 
+	#gltfLoader: GLTFLoader;
+	#fontLoader: FontLoader;
+	#ktx2Loader: KTX2Loader;
+
+	#computeShaders: ShaderNodeObject<ComputeNode>[] = [];
+
+	deltaTimeUniform: ShaderNodeObject<UniformNode<number>> = uniform( 0 );
+	timeUniform: ShaderNodeObject<UniformNode<number>> = uniform( 0 );
+
+
 	#timeSinceLastUpdate = 0;
 	#timeSinceLastRender = 0;
 
@@ -162,7 +176,7 @@ class App {
 
 	}
 
-	#setupRenderer( options ) {
+	#setupRenderer( options: AppInitializationOptions ) {
 
 		this.#getRenderer( options.rendererType ? options.rendererType : 'WebGPU' );
 
@@ -175,6 +189,15 @@ class App {
 
 		const aspect = window.innerWidth / window.innerHeight;
 		const cameraType = options.initialCameraMode ? options.initialCameraMode : 'perspective';
+
+		if ( options.fixedFrameRate !== undefined ) {
+
+			this.#rendererSettings.fixedUnifiedFPS = options.fixedFrameRate;
+			this.#rendererSettings.fixedCPUFPS = options.fixedFrameRate;
+			this.#rendererSettings.fixedGPUFPS = options.fixedFrameRate;
+			this.#rendererSettings.useFixedFrameRate = true;
+
+		}
 
 		if ( cameraType === 'perspective' ) {
 
@@ -205,7 +228,7 @@ class App {
 
 	}
 
-	async #setupProject( options ) {
+	async #setupProject( options: AppInitializationOptions ) {
 
 		await this.#setupRenderer( options );
 
@@ -387,7 +410,7 @@ class App {
 
 			if ( useFixedFrameRate ) {
 
-				// # of times per second to update the state
+				// # of times per second to update the state (called cpuFrameInterval but also just for any state update)
 				const cpuFrameInterval = 1 / fixedCPUFPS;
 				// # of times per second to render a frame
 				const gpuFrameInterval = 1 / fixedGPUFPS;
@@ -424,7 +447,32 @@ class App {
 
 		this.onStep( deltaTime, totalTimeElapsed );
 
+		// TODO: Determine some way to make scheduling of compute shaders more flexible
+		// I.E before or after this.onStep
+
+		for ( const computeShader of this.#computeShaders ) {
+
+			this.compute( computeShader );
+
+		}
+
 		//this.#controls.update( deltaTime );
+
+	}
+
+	scheduleComputeShaders( computeShaders: ShaderNodeObject<ComputeNode>[] ) {
+
+		this.#computeShaders.push( ...computeShaders );
+
+	}
+
+	compute( fn ) {
+
+		if ( this.rendererType !== 'WebGL' ) {
+
+			( this.#renderer as WebGPURenderer ).computeAsync( fn );
+
+		}
 
 	}
 
@@ -481,9 +529,13 @@ class App {
 
 		if ( cameraResizeUpdate ) {
 
-			this.#camera.aspect = useFixedAspectRatio ?
-				aspectWidth / aspectHeight :
-				window.innerWidth / window.innerHeight;
+			if ( this.#camera.type === 'PerspectiveCamera' ) {
+
+				( this.#camera as THREE.PerspectiveCamera ).aspect = useFixedAspectRatio ?
+					aspectWidth / aspectHeight :
+					window.innerWidth / window.innerHeight;
+
+			}
 
 			this.#camera.updateProjectionMatrix();
 
@@ -543,12 +595,120 @@ class App {
 
 	}
 
-	loadModel( path, loadCallback: GLTFLoadCallback ) {
+	#setupKTX2Loader() {
 
-		const loader = new GLTFLoader();
-		loader.setPath( './resources/models/' );
-		loader.load( path, loadCallback );
+		this.#ktx2Loader = new KTX2Loader();
+		this.#ktx2Loader.setTranscoderPath( './libs/basis/' );
+		this.#ktx2Loader.detectSupport( this.#renderer );
 
+	}
+
+	async loadKTX2( path, srgb = true ): Promise<THREE.CompressedTexture> {
+
+		if ( this.#ktx2Loader === undefined ) {
+
+			this.#setupKTX2Loader();
+
+		}
+
+		return new Promise( ( resolve, reject ) => {
+
+			this.#ktx2Loader.load( path, ( texture ) => {
+
+				if ( srgb ) {
+
+					texture.encoding = THREE.sRGBEncoding;
+
+				}
+
+				resolve( texture );
+
+			} );
+
+		} );
+
+	}
+
+	async loadTexture( path, srgb = true ): Promise<THREE.Texture> {
+
+		if ( path.endsWith( '.ktx2' ) ) {
+
+			return this.loadKTX2( path, srgb );
+
+		} else {
+
+			return new Promise( ( resolve, reject ) => {
+
+				const loader = new THREE.TextureLoader();
+				loader.load( path, ( texture ) => {
+
+					if ( srgb ) {
+
+						texture.colorSpace = THREE.SRGBColorSpace;
+
+					}
+
+					resolve( texture );
+
+				} );
+
+			} );
+
+		}
+
+	}
+
+	loadModel( path: string, loadCallback: GLTFLoadCallback ) {
+
+		if ( this.#gltfLoader === undefined ) {
+
+			this.#gltfLoader = new GLTFLoader();
+
+		}
+
+		this.#gltfLoader.setPath( './resources/models/' );
+		this.#gltfLoader.load( path, loadCallback );
+
+	}
+
+	async loadFont( path ): Promise<Font> {
+
+		if ( this.#fontLoader === undefined ) {
+
+			this.#fontLoader = new FontLoader();
+
+		}
+
+		return new Promise( ( resolve, reject ) => {
+
+			this.#fontLoader.load( path, ( font ) => {
+
+				resolve( font );
+
+			} );
+
+
+		} );
+
+	}
+
+	async loadGLTF( path: string ): Promise<THREE.Group> {
+
+		if ( this.#gltfLoader === undefined ) {
+
+			this.#gltfLoader = new GLTFLoader();
+
+		}
+
+		return new Promise( ( resolve, reject ) => {
+
+			this.#gltfLoader.load( path, ( gltf: GLTF ) => {
+
+				resolve( gltf.scene );
+
+			} );
+
+		} );
 
 	}
 
@@ -578,6 +738,12 @@ class App {
 	get Scene() {
 
 		return this.#scene;
+
+	}
+
+	get Renderer() {
+
+		return this.#renderer;
 
 	}
 

@@ -6,13 +6,20 @@ import { GLTF } from 'three/examples/jsm/Addons.js';
 // GLTF Scene can contain an array of animations
 // AnimationClip class: can take keyframes of the animation
 
+interface SettingsInterface {
+	currentClipName: string;
+}
+
 class CharacterAnimation extends App {
 
 	#mixer: THREE.AnimationMixer;
+	#settings: SettingsInterface;
 
 	constructor() {
 
 		super();
+
+		this.#settings.currentClipName = 'idle';
 
 	}
 
@@ -90,6 +97,23 @@ class CharacterAnimation extends App {
 				}
 
 			} );
+
+			const prevAnimation = null;
+			const actions = [];
+
+			for ( let animIndex = 0; animIndex < gltf.animations.length; animIndex ++ ) {
+
+				const clip = gltf.animations[ animIndex ];
+				const action = this.#mixer.clipAction( clip );
+
+				actions[ clip.name ] = action;
+
+				const animationFolder = this.DebugGui.addFolder( 'Animation' );
+				animationFolder.add( this.#settings, 'currentClipName' ).onChange( () => {
+
+				} );
+
+			}
 
 			this.Scene.add( gltf.scene );
 			this.#mixer = new THREE.AnimationMixer( gltf.scene );
